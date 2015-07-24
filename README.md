@@ -1,5 +1,5 @@
 # PowerJax
-Shellcode Injection with Powershell. (Cross-Arch Coming soon)
+Shellcode Injection with Powershell. 
 
 Power Jax
 
