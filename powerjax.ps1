@@ -418,14 +418,12 @@ function Invoke-PowerJax{
             }
             elseif(($IsWow64 -eq $False) -and ($script:CurrProcArc -eq 32)){
                 Throw "Cannot inject shellcode from 32 -> 64"
-                #Cross architecture injection coming
             }
             elseif(($IsWow64) -and ($script:CurrProcArc -eq 32)){
                 Invoke-InjectShellcodeRemote($ProcessHandle)
             }
             elseif(($IsWow64) -and ($script:CurrProcArc -eq 64)){
                 Throw "Unable to inject shellcode from 64 -> 32"
-                #64 -> 32
             }
 
         }
